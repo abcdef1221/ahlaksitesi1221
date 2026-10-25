@@ -102,18 +102,18 @@
   .about-link { color: var(--accent); font-weight: 600; text-decoration: none; }
   .about-link:hover { text-decoration: underline; }
 
-  #bakim {
+  #sitePerde {
     display: none; position: fixed; inset: 0; z-index: 5000;
     background: var(--bg); color: var(--text);
     align-items: center; justify-content: center; text-align: center; padding: 24px;
   }
-  #bakim span { font-size: 1.35rem; font-weight: 700; line-height: 1.5; }
-  body.bakimda > :not(#bakim), body.hazirlaniyor > :not(#bakim) { display: none !important; }
+  #sitePerde span { font-size: 1.35rem; font-weight: 700; line-height: 1.5; }
+  body.perdede > :not(#sitePerde), body.hazirlaniyor > :not(#sitePerde) { display: none !important; }
 </style>
 </head>
 <body class="hazirlaniyor">
 
-<div id="bakim"><span>Sitemiz Bakım Sebebiyle Bir Süre Kapalıdır</span></div>
+<div id="sitePerde"><span id="perdeYazi">Sitemiz Bakım Sebebiyle Bir Süre Kapalıdır</span></div>
 
 <div class="overlay" id="overlay" onclick="closeSidebar()"></div>
 <div class="sidebar" id="sidebar">
@@ -732,13 +732,21 @@ function siteClosed() {
   return String((settings && settings.durum) || "").split("|")[0] === "kapali";
 }
 
-function siteInMaintenance() {
-  return String((settings && settings.durum) || "").split("|")[0] === "bakim";
+// Ziyaretciye cerpan tam ekran uyarisi: "" | "bakim" | "kapandi".
+// Eski sunucu surumunde bakim durum="bakim" olarak saklaniyordu, ona da bakilir.
+function perdeAdi() {
+  const a = settings || {};
+  const p = String(a.perde || "");
+  if (p === "bakim" || p === "kapandi") return p;
+  return String(a.durum || "").split("|")[0] === "bakim" ? "bakim" : "";
 }
 
-function showBakim() {
-  document.body.classList.add("bakimda");
-  document.getElementById("bakim").style.display = "flex";
+function showPerde(perde) {
+  document.getElementById("perdeYazi").textContent = perde === "kapandi"
+    ? "Şuanda Sitemiz Kapalı Durumdadır En Yakın Zamanda Tekrar Açılacaktır"
+    : "Sitemiz Bakım Sebebiyle Bir Süre Kapalıdır";
+  document.body.classList.add("perdede");
+  document.getElementById("sitePerde").style.display = "flex";
 }
 
 document.getElementById("submitBtn").onclick = async () => {
@@ -770,9 +778,9 @@ document.getElementById("submitBtn").onclick = async () => {
   show("view-hadith");
 
   const counts = await sendVote(todayKey(), daily.questionIdx, selectedIndex, reason);
-  if (counts && counts.error === "site bakimda") {
-    bakimAktif = true;
-    showBakim();
+  if (counts && (counts.error === "site bakimda" || counts.error === "site kapali")) {
+    perdeAktif = counts.error === "site kapali" ? "kapandi" : "bakim";
+    showPerde(perdeAktif);
     return;
   }
   renderResults(counts, q);
@@ -1026,7 +1034,8 @@ async function handleNewDay() {
     seenDayKey = todayKey();
     const wasOnQuestion = activeViewId() === "view-question";
     await refreshDailyContent();
-    if (siteInMaintenance()) { showBakim(); return; }
+    const p = perdeAdi();
+    if (p) { perdeAktif = p; showPerde(p); return; }
     loadPrayerTimes(document.getElementById("cityInput").value.trim() || "Istanbul");
 
     if (wasOnQuestion || !answeredToday()) renderQuestion();
@@ -1051,15 +1060,15 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && todayKey() !== seenDayKey) handleNewDay();
 });
 
-let bakimAktif = false;
+let perdeAktif = "";
 
-function bakimNabiz() {
+function perdeNabiz() {
   setInterval(async () => {
     if (document.visibilityState !== "visible") return;
     await loadSettings();
-    const bakimda = siteInMaintenance();
-    if (bakimda && !bakimAktif) { bakimAktif = true; showBakim(); }
-    else if (!bakimda && bakimAktif) { location.reload(); }
+    const p = perdeAdi();
+    if (p && p !== perdeAktif) { perdeAktif = p; showPerde(p); }
+    else if (!p && perdeAktif) { location.reload(); }
   }, 60000);
 }
 
@@ -1072,11 +1081,11 @@ async function initApp() {
 
   await loadSettings();
   document.body.classList.remove("hazirlaniyor");
-  bakimNabiz();
+  perdeNabiz();
 
-  if (siteInMaintenance()) {
-    bakimAktif = true;
-    showBakim();
+  perdeAktif = perdeAdi();
+  if (perdeAktif) {
+    showPerde(perdeAktif);
     return;
   }
 
