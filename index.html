@@ -660,6 +660,27 @@ if (!clientId) {
   localStorage.setItem("project_client_id", clientId);
 }
 
+// Ziyaret kaydı: sekme görünürken oturum açık sayılır. Kapanma bildirimi sunucuya
+// her zaman ulaşamaz; ulaşamazsa sunucu oturumu açık bırakır ve süre eklenmez.
+let oturumAcik = false;
+let cikisIslegi = null;
+
+function girisBildir() {
+  if (oturumAcik) return;
+  oturumAcik = true;
+  callApi({ action: "visit", client: clientId }).catch(() => { oturumAcik = false; });
+}
+
+function cikisBildir() {
+  if (!oturumAcik) return;
+  oturumAcik = false;
+  const query = new URLSearchParams({ action: "leave", client: clientId, _t: Date.now() }).toString();
+  cikisIslegi = new Image();
+  cikisIslegi.src = `${SCRIPT_URL}?${query}`;
+}
+
+window.addEventListener("pagehide", cikisBildir);
+
 let selectedIndex = null;
 let redirectTimers = [];
 
@@ -732,8 +753,8 @@ function siteClosed() {
   return String((settings && settings.durum) || "").split("|")[0] === "kapali";
 }
 
-// Ziyaretciye cerpan tam ekran uyarisi: "" | "bakim" | "kapandi".
-// Eski sunucu surumunde bakim durum="bakim" olarak saklaniyordu, ona da bakilir.
+// Ziyaretçiye perde çeken tam ekran uyarısı: "" | "bakim" | "kapandi".
+// Eski sunucu sürümünde bakım durum="bakim" olarak saklanıyordu, ona da bakılır.
 function perdeAdi() {
   const a = settings || {};
   const p = String(a.perde || "");
@@ -783,9 +804,18 @@ document.getElementById("submitBtn").onclick = async () => {
     showPerde(perdeAktif);
     return;
   }
-  renderResults(counts, q);
-
   btn.textContent = wasAnswered ? "Cevabı Güncelle" : "Cevabı Gönder";
+
+  // Sunucu oy dizisi döndürmediyse kayıt düşmemiştir. Teşekkür ekranına geçip
+  // "kaydedildi" demek, panelde görünmeyen cevabı gizlemek olur; soruya dönülür.
+  if (!Array.isArray(counts)) {
+    renderQuestion();
+    show("view-question");
+    showNotification(counts && counts.error ? String(counts.error)
+      : "Cevabın sunucuya gidemedi. İnterneti kontrol edip tekrar gönder.");
+    return;
+  }
+  renderResults(counts, q);
 
   clearRedirectTimers();
   redirectTimers.push(setTimeout(() => {
@@ -799,14 +829,6 @@ document.getElementById("submitBtn").onclick = async () => {
 
 function renderResults(counts, q) {
   const box = document.getElementById("resultsBox");
-  if (counts === false) {
-    box.innerHTML = "<p class='muted'>Sunucuya ulaşılamadı; cevabın yalnızca bu cihazda saklandı. İnternet olduğu zaman tekrar cevaplayınca kaydın sunucuya da işlenir.</p>";
-    return;
-  }
-  if (!counts || typeof counts !== "object") {
-    box.innerHTML = "<p class='muted'>Sonuçlar şu an alınamadı; yanıtın yine de kaydedildi.</p>";
-    return;
-  }
   const total = q.options.reduce((sum, _, i) => sum + (Number(counts[i]) || 0), 0);
   if (!total) {
     box.innerHTML = "<p class='muted'>Bu soru için henüz sonuç yok. İlk yanıt sen olabilirsin.</p>";
@@ -892,13 +914,16 @@ async function confirmEdit(qIdx) {
   saveAnswerToHistory(qIdx, optVal, reasonVal);
   renderHistory();
   const sent = await sendVote(todayKey(), qIdx, optVal, reasonVal);
-  showNotification(sent === false ? "İnternet yok; değişiklik yalnızca bu cihazda kaydedildi." : "Cevabınız başarıyla güncellendi.");
+  showNotification(Array.isArray(sent) ? "Cevabınız güncellendi."
+    : (sent && sent.error ? String(sent.error)
+      : "Cevabın sunucuya gidemedi; değişiklik yalnızca bu cihazda kaldı. İnterneti kontrol edip tekrar dene."));
 }
 
 async function renderPublicFeed() {
   const box = document.getElementById("publicFeedBox");
   try {
-    const json = await callApi({ action: "getAll" });
+    // Ziyaretçinin okuduğu tek kaynak herkese açık uç; panel yetkisi isteyen uçlara bağlanmıyor.
+    const json = await callApi({ action: "getPublished" });
     const rows = Array.isArray(json.rows) ? json.rows : [];
     const published = rows.filter(r => r && r.durum === "yayinda");
 
@@ -1057,6 +1082,8 @@ function scheduleMidnightCheck() {
 }
 
 document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") { cikisBildir(); return; }
+  if (document.visibilityState === "visible") girisBildir();
   if (document.visibilityState === "visible" && todayKey() !== seenDayKey) handleNewDay();
 });
 
@@ -1081,6 +1108,7 @@ async function initApp() {
 
   await loadSettings();
   document.body.classList.remove("hazirlaniyor");
+  girisBildir();
   perdeNabiz();
 
   perdeAktif = perdeAdi();
